@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  f1tv-token-service:
+    build: .
+    container_name: f1tv-token-service
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DISPLAY=:99
+    volumes:
+      # Mount debug directory to access screenshots
+      - ./debug:/app/debug
+      # Optional: Mount a persistent browser profile
+      # - ./browser-data:/app/browser-data
+    restart: unless-stopped
+    # Increase shared memory size for Chromium
+    shm_size: 2gb
+    # Security options for running Chrome in Docker
+    security_opt:
+      - seccomp:unconfined
+    # Cap add for better Chrome compatibility
+    cap_add:
+      - SYS_ADMIN
