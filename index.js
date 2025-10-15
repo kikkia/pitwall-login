@@ -370,7 +370,7 @@ async function getToken(email, password) {
         
         await page.waitForSelector('.txtLogin', { timeout: 10000 });
         console.log('Login page loaded.');
-        await logCookies(page, 'after page load');
+        //await logCookies(page, 'after page load');
 
         //await page.screenshot({ path: `${debugDir}/01-login-page.png` });
         console.log('Waiting for page to settle...');
@@ -449,7 +449,7 @@ async function getToken(email, password) {
             randomizeMoveDelay: true,
         });
         console.log('Login button clicked.');
-        await logCookies(page, 'after login click');
+        //await logCookies(page, 'after login click');
         
         await new Promise(resolve => setTimeout(resolve, 7000));
         //await page.screenshot({ path: `${debugDir}/03-after-login-click.png` });
