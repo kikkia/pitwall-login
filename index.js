@@ -474,8 +474,11 @@ async function getToken(email, password) {
         });
 
         if (loginSessionCookie) {
-            loginSessionCookie.value = decodeURIComponent(loginSessionCookie.value);
-            return loginSessionCookie;
+            const cookieValue = JSON.parse(decodeURIComponent(loginSessionCookie.value));
+            return {
+                expires: loginSessionCookie.expires,
+                subscriptionToken: cookieValue.data.subscriptionToken
+            };
         } else {
             console.log('Login session cookie not found.');
             //await page.screenshot({ path: `${debugDir}/04-token-not-found.png` });
