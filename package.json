@@ -4,7 +4,8 @@
   "description": "A service to fetch F1 TV authentication tokens.",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "headless-start": "xvfb-run node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
