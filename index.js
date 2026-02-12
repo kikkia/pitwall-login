@@ -3,6 +3,7 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createCursor, installMouseHelper } = require('ghost-cursor');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -89,6 +90,7 @@ async function getToken(email, password) {
         browser = await puppeteer.launch({
             headless: false,
             args: [
+                `--load-extension=${path.join(__dirname, 'extension', 'isdcac')}`,
                 '--disable-blink-features=AutomationControlled',
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -328,23 +330,15 @@ async function getToken(email, password) {
         
         let subscriptionToken = null;
         console.log('Browser launched. Page created.');
-
-        // Set up request interception with more realistic behavior
-
-        console.log('Setting consent cookies...');
-        await page.setCookie(
-            { name: 'consentDate', value: new Date().toISOString(), domain: '.formula1.com' },
-            { name: 'consentUUID', value: '6382840f-c1ab-400e-8ace-da2fa10c59cb_49', domain: '.formula1.com' }
-        );
-        console.log('Consent cookies set.');
+        // The browser extension will handle cookies, so we don't need to set them manually.
 
         console.log('Navigating to F1 TV homepage...');
-        await page.goto('https://f1tv.formula1.com/', { 
+        await page.goto('https://f1tv.formula1.com/', {
             waitUntil: 'networkidle0',
             timeout: 30000
         });
         console.log('F1 TV homepage loaded.');
-
+        
         // Random mouse movements to simulate browsing
         await cursor.moveTo({ x: Math.random() * viewport.width, y: Math.random() * viewport.height });
         await new Promise(resolve => setTimeout(resolve, randomDelay(1000, 2000)));
@@ -370,9 +364,9 @@ async function getToken(email, password) {
         
         await page.waitForSelector('.txtLogin', { timeout: 10000 });
         console.log('Login page loaded.');
-        //await logCookies(page, 'after page load');
+        await logCookies(page, 'after page load');
 
-        //await page.screenshot({ path: `${debugDir}/01-login-page.png` });
+        await page.screenshot({ path: `${debugDir}/01-login-page.png` });
         console.log('Waiting for page to settle...');
         await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 3500)));
 
@@ -426,7 +420,7 @@ async function getToken(email, password) {
         console.log('Typing password...');
         await humanType(page, password, 0.03);
         console.log('Password typed.');
-        //await page.screenshot({ path: `${debugDir}/02-credentials-entered.png` });
+        await page.screenshot({ path: `${debugDir}/02-credentials-entered.png` });
 
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
 
@@ -449,10 +443,10 @@ async function getToken(email, password) {
             randomizeMoveDelay: true,
         });
         console.log('Login button clicked.');
-        //await logCookies(page, 'after login click');
+        await logCookies(page, 'after login click');
         
         await new Promise(resolve => setTimeout(resolve, 7000));
-        //await page.screenshot({ path: `${debugDir}/03-after-login-click.png` });
+        await page.screenshot({ path: `${debugDir}/03-after-login-click.png` });
 
         console.log('Waiting for login session cookie...');
         let loginSessionCookie = null;
@@ -481,13 +475,13 @@ async function getToken(email, password) {
             };
         } else {
             console.log('Login session cookie not found.');
-            //await page.screenshot({ path: `${debugDir}/04-token-not-found.png` });
+            await page.screenshot({ path: `${debugDir}/04-token-not-found.png` });
             return null;
         }
     } catch (error) {
         console.error('Error in getToken:', error);
         if (page) {
-            //await page.screenshot({ path: `${debugDir}/error-screenshot.png` });
+            await page.screenshot({ path: `${debugDir}/error-screenshot.png` });
         }
         throw error;
     } finally {
