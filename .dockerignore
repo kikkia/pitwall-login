@@ -1,6 +1,7 @@
 node_modules
 .git
 .gitignore
+.circleci
 debug
 *.log
 .env*
