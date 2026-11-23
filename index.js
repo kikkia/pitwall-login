@@ -64,7 +64,7 @@ async function logCookies(page, stage) {
     if (!DEBUG) return;
     const cookies = await page.cookies();
     const sanitized = cookies.map(c =>
-        c.name === 'login-session' ? { ...c, value: '[REDACTED]' } : c
+        /session|token|auth/i.test(c.name) ? { ...c, value: '[REDACTED]' } : c
     );
     console.log(`--- Cookies at ${stage} ---`);
     console.log(JSON.stringify(sanitized, null, 2));
@@ -297,7 +297,8 @@ async function getToken(email, password) {
         await cursor.moveTo({ x: Math.random() * viewport.width, y: Math.random() * viewport.height });
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
         
-        await page.waitForSelector('.txtLogin', { timeout: remainingMs(15000) });
+        const emailSelector = '#username, .txtLogin';
+        await page.waitForSelector(emailSelector, { timeout: remainingMs(15000) });
         console.log('Login page loaded.');
         await logCookies(page, 'after page load');
 
@@ -307,7 +308,6 @@ async function getToken(email, password) {
 
         // More human-like interaction with the form
         console.log('Interacting with email field...');
-        const emailSelector = '.txtLogin';
         
         // Move mouse near the field first
         await moveNearElement(page, cursor, emailSelector, 20, 10);
@@ -328,7 +328,7 @@ async function getToken(email, password) {
         await new Promise(resolve => setTimeout(resolve, randomDelay(800, 1500)));
         
         console.log('Interacting with password field...');
-        const passwordSelector = '.txtPassword';
+        const passwordSelector = '#password, .txtPassword';
         await page.waitForSelector(passwordSelector, { timeout: remainingMs(10000) });
         
         await moveNearElement(page, cursor, passwordSelector, 20, 10);
@@ -350,7 +350,7 @@ async function getToken(email, password) {
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
 
         console.log('Clicking login button...');
-        const loginButtonSelector = '#loginform button[type="submit"], #loginform > div:nth-child(4) > button:nth-child(2)';
+        const loginButtonSelector = '#btnLogin, #loginform button[type="submit"], #loginform > div:nth-child(4) > button:nth-child(2)';
         await page.waitForSelector(loginButtonSelector, { timeout: remainingMs(10000) });
         
         await moveNearElement(page, cursor, loginButtonSelector, 10, 5);
