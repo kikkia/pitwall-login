@@ -10,6 +10,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const DEBUG = process.env.DEBUG === 'true';
+const LOGIN_TIMEOUT_MS = Number(process.env.LOGIN_TIMEOUT_MS) || 80000;
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
@@ -88,6 +89,14 @@ app.post('/get_token', async (req, res) => {
 
 async function getToken(email, password) {
     let browser, page;
+    const deadline = Date.now() + LOGIN_TIMEOUT_MS;
+    const remainingMs = (max) => {
+        const left = deadline - Date.now();
+        if (left <= 0) {
+            throw new Error(`Login timed out after ${LOGIN_TIMEOUT_MS}ms`);
+        }
+        return Math.min(max, left);
+    };
     const debugDir = './debug';
     if (DEBUG && !fs.existsSync(debugDir)){
         fs.mkdirSync(debugDir, { recursive: true });
@@ -347,8 +356,8 @@ async function getToken(email, password) {
 
         console.log('Navigating to F1 TV homepage...');
         await page.goto('https://f1tv.formula1.com/', {
-            waitUntil: 'networkidle0',
-            timeout: 30000
+            waitUntil: 'domcontentloaded',
+            timeout: remainingMs(20000)
         });
         console.log('F1 TV homepage loaded.');
         
@@ -363,7 +372,7 @@ async function getToken(email, password) {
         await new Promise(resolve => setTimeout(resolve, randomDelay(800, 1500)));
 
         const signInButtonSelector = 'a.btn.btn-f1-dark[title="Sign in"]';
-        await page.waitForSelector(signInButtonSelector, { timeout: 10000 });
+        await page.waitForSelector(signInButtonSelector, { timeout: remainingMs(15000) });
         
         await cursor.click(signInButtonSelector, {
             hesitate: randomDelay(1500, 2500),
@@ -375,7 +384,7 @@ async function getToken(email, password) {
         await cursor.moveTo({ x: Math.random() * viewport.width, y: Math.random() * viewport.height });
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
         
-        await page.waitForSelector('.txtLogin', { timeout: 10000 });
+        await page.waitForSelector('.txtLogin', { timeout: remainingMs(15000) });
         console.log('Login page loaded.');
         await logCookies(page, 'after page load');
 
@@ -463,29 +472,37 @@ async function getToken(email, password) {
 
         console.log('Waiting for login session cookie...');
         let loginSessionCookie = null;
-        await new Promise(resolve => {
-            const checkCookie = setInterval(async () => {
+        const pollDeadline = Math.min(Date.now() + 30000, deadline);
+        while (Date.now() < pollDeadline) {
+            try {
                 const cookies = await page.cookies();
                 loginSessionCookie = cookies.find(c => c.name === 'login-session');
                 if (loginSessionCookie) {
                     console.log('Login session cookie found.');
-                    clearInterval(checkCookie);
-                    resolve();
+                    break;
                 }
-            }, 1000);
-
-            setTimeout(() => {
-                clearInterval(checkCookie);
-                resolve(); // End the wait after 30 seconds regardless
-            }, 30000);
-        });
+            } catch (pollErr) {
+                console.warn('Error polling cookies:', pollErr.message);
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
 
         if (loginSessionCookie) {
-            const cookieValue = JSON.parse(decodeURIComponent(loginSessionCookie.value));
-            return {
-                expires: loginSessionCookie.expires,
-                subscriptionToken: cookieValue.data.subscriptionToken
-            };
+            try {
+                const cookieValue = JSON.parse(decodeURIComponent(loginSessionCookie.value));
+                const subscriptionToken = cookieValue && cookieValue.data && cookieValue.data.subscriptionToken;
+                if (!subscriptionToken) {
+                    console.error('Login session cookie missing subscriptionToken.');
+                    return null;
+                }
+                return {
+                    expires: loginSessionCookie.expires,
+                    subscriptionToken
+                };
+            } catch (parseErr) {
+                console.error('Failed to parse login-session cookie:', parseErr);
+                return null;
+            }
         } else {
             console.log('Login session cookie not found.');
             await debugScreenshot(page, debugDir, '04-token-not-found.png');
@@ -494,17 +511,29 @@ async function getToken(email, password) {
     } catch (error) {
         console.error('Error in getToken:', error);
         if (page) {
-            await debugScreenshot(page, debugDir, 'error-screenshot.png');
+            try {
+                await debugScreenshot(page, debugDir, 'error-screenshot.png');
+            } catch (screenshotErr) {
+                console.warn('Failed to capture error screenshot:', screenshotErr.message);
+            }
         }
         throw error;
     } finally {
         if (page) {
-            await logCookies(page, 'before browser close');
+            try {
+                await logCookies(page, 'before browser close');
+            } catch (cookieErr) {
+                console.warn('Failed to log cookies before close:', cookieErr.message);
+            }
         }
         if (browser) {
             console.log('Closing browser.');
-            await browser.close();
-            console.log('Browser closed.');
+            try {
+                await browser.close();
+                console.log('Browser closed.');
+            } catch (closeErr) {
+                console.error('Failed to close browser cleanly:', closeErr);
+            }
         }
     }
 }
