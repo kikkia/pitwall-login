@@ -14,7 +14,6 @@ const LOGIN_TIMEOUT_MS = Number(process.env.LOGIN_TIMEOUT_MS) || 80000;
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
-stealthPlugin.enabledEvasions.delete('navigator.plugins');
 puppeteer.use(stealthPlugin);
 
 function randomDelay(min = 50, max = 200) {
@@ -23,32 +22,34 @@ function randomDelay(min = 50, max = 200) {
 
 async function humanType(page, text, mistakeRate = 0.05) {
     for (const char of text) {
-        if (Math.random() < mistakeRate) {
+        if (mistakeRate > 0 && Math.random() < mistakeRate) {
             const wrongChar = 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)];
-            await page.keyboard.press(wrongChar, { delay: randomDelay(40, 130) });
+            await page.keyboard.type(wrongChar, { delay: randomDelay(40, 130) });
             await new Promise(resolve => setTimeout(resolve, randomDelay(80, 220)));
             await page.keyboard.press('Backspace');
             await new Promise(resolve => setTimeout(resolve, randomDelay(60, 150)));
         }
 
-        const requiresShift = (char >= 'A' && char <= 'Z') || '~!@#$%^&*()_+{}|:"<>?'.includes(char);
-        if (requiresShift) {
-            await page.keyboard.down('Shift');
-        }
-
         try {
-            await page.keyboard.press(char, { delay: randomDelay(50, 150) });
+            await page.keyboard.type(char, { delay: randomDelay(50, 150) });
         } catch (e) {
-            console.error(`Error pressing key: ${char}`, e);
+            console.error('Error typing character:', e.message);
             await page.keyboard.sendCharacter(char);
-        }
-
-        if (requiresShift) {
-            await page.keyboard.up('Shift');
         }
 
         await new Promise(resolve => setTimeout(resolve, randomDelay(30, 120)));
     }
+}
+
+async function moveNearElement(page, cursor, selector, jitterX = 20, jitterY = 10) {
+    const element = await page.$(selector);
+    if (!element) return;
+    const box = await element.boundingBox();
+    if (!box) return;
+    await cursor.moveTo({
+        x: box.x + box.width / 2 + randomDelay(-jitterX, jitterX),
+        y: box.y + box.height / 2 + randomDelay(-jitterY, jitterY)
+    });
 }
 
 async function logCookies(page, stage) {
@@ -137,88 +138,17 @@ async function getToken(email, password) {
         const pages = await browser.pages();
         page = pages[0] || await browser.newPage();
 
-        // Enhanced stealth measures
+        // Consistent browser fingerprint helpers (leaving OS/UA/WebGL consistent with host Chromium)
         await page.evaluateOnNewDocument(() => {
-            // Remove webdriver property
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-            });
+            if (window.navigator.permissions && window.navigator.permissions.query) {
+                const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications'
+                        ? Promise.resolve({ state: Notification.permission })
+                        : originalQuery(parameters)
+                );
+            }
 
-            // Mock plugins
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [
-                    {
-                        0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: Plugin},
-                        description: "Portable Document Format",
-                        filename: "internal-pdf-viewer",
-                        length: 1,
-                        name: "Chrome PDF Plugin"
-                    }
-                ],
-            });
-
-            // Fix webdriver property
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-            });
-
-            // Mock Chrome runtime
-            window.chrome = {
-                runtime: {
-                    OnInstalledReason: {
-                        CHROME_UPDATE: "chrome_update",
-                        INSTALL: "install",
-                        SHARED_MODULE_UPDATE: "shared_module_update",
-                        UPDATE: "update",
-                    },
-                    OnRestartRequiredReason: {
-                        APP_UPDATE: "app_update",
-                        OS_UPDATE: "os_update",
-                        PERIODIC: "periodic",
-                    },
-                    PlatformArch: {
-                        ARM: "arm",
-                        ARM64: "arm64",
-                        MIPS: "mips",
-                        MIPS64: "mips64",
-                        X86_32: "x86-32",
-                        X86_64: "x86-64",
-                    },
-                    PlatformNaclArch: {
-                        ARM: "arm",
-                        MIPS: "mips",
-                        MIPS64: "mips64",
-                        X86_32: "x86-32",
-                        X86_64: "x86-64",
-                    },
-                    PlatformOs: {
-                        ANDROID: "android",
-                        CROS: "cros",
-                        LINUX: "linux",
-                        MAC: "mac",
-                        OPENBSD: "openbsd",
-                        WIN: "win",
-                    },
-                    RequestUpdateCheckStatus: {
-                        NO_UPDATE: "no_update",
-                        THROTTLED: "throttled",
-                        UPDATE_AVAILABLE: "update_available",
-                    },
-                },
-                loadTimes: function() {},
-                csi: function() {},
-                app: {}
-            };
-
-            // Override permissions
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-            );
-
-            // Add realistic language properties
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['en-US', 'en'],
             });
@@ -227,96 +157,10 @@ async function getToken(email, password) {
                 get: () => 'en-US',
             });
 
-            // Mock battery API (often checked)
-            if (!navigator.getBattery) {
-                navigator.getBattery = () => Promise.resolve({
-                    charging: true,
-                    chargingTime: 0,
-                    dischargingTime: Infinity,
-                    level: 1,
-                    addEventListener: () => {},
-                    removeEventListener: () => {},
-                    onchargingchange: null,
-                    onchargingtimechange: null,
-                    ondischargingtimechange: null,
-                    onlevelchange: null
-                });
-            }
-
-            // Mock connection API
-            Object.defineProperty(navigator, 'connection', {
-                get: () => ({
-                    effectiveType: '4g',
-                    downlink: 10,
-                    rtt: 50,
-                    saveData: false,
-                }),
-            });
-
-            // Mock deviceMemory
-            Object.defineProperty(navigator, 'deviceMemory', {
-                get: () => 8,
-            });
-
-            // Mock hardwareConcurrency
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => 8,
-            });
-
-            // Mock platform
-            Object.defineProperty(navigator, 'platform', {
-                get: () => 'Win32',
-            });
-
-            // Mock vendor
-            Object.defineProperty(navigator, 'vendor', {
-                get: () => 'Google Inc.',
-            });
-
-            // Add realistic screen properties
-            Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-            Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
-            Object.defineProperty(screen, 'width', { get: () => 1920 });
-            Object.defineProperty(screen, 'height', { get: () => 1080 });
-            Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-            Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
-
-            // Mock WebGL vendor and renderer
-            const getParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                if (parameter === 37445) {
-                    return 'Intel Inc.';
-                }
-                if (parameter === 37446) {
-                    return 'Intel Iris OpenGL Engine';
-                }
-                return getParameter.apply(this, [parameter]);
-            };
-
-            // Mock canvas fingerprinting
-            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            HTMLCanvasElement.prototype.toDataURL = function(type) {
-                const context = this.getContext('2d');
-                if (context) {
-                    const imageData = context.getImageData(0, 0, this.width, this.height);
-                    for (let i = 0; i < imageData.data.length; i += 4) {
-                        imageData.data[i] += Math.floor(Math.random() * 3) - 1;
-                        imageData.data[i + 1] += Math.floor(Math.random() * 3) - 1;
-                        imageData.data[i + 2] += Math.floor(Math.random() * 3) - 1;
-                    }
-                    context.putImageData(imageData, 0, 0);
-                }
-                return originalToDataURL.apply(this, [type]);
-            };
-
-            // Hide automation detection
-            delete Object.getPrototypeOf(navigator).webdriver;
-
-            // Mock media devices
             if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-                const originalEnumerateDevices = navigator.mediaDevices.enumerateDevices;
+                const originalEnumerateDevices = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
                 navigator.mediaDevices.enumerateDevices = function() {
-                    return originalEnumerateDevices.call(this).then(devices => {
+                    return originalEnumerateDevices().then(devices => {
                         if (devices.length === 0) {
                             return [
                                 { deviceId: 'default', kind: 'audioinput', label: '', groupId: 'group1' },
@@ -333,9 +177,6 @@ async function getToken(email, password) {
         if (DEBUG) {
             await installMouseHelper(page);
         }
-        
-        // Use a more realistic user agent
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
         
         await page.setViewport({ width: 1920, height: 1080 });
         const viewport = await page.viewport();
@@ -397,12 +238,7 @@ async function getToken(email, password) {
         const emailSelector = '.txtLogin';
         
         // Move mouse near the field first
-        const emailElement = await page.$(emailSelector);
-        const emailBox = await emailElement.boundingBox();
-        await cursor.moveTo({ 
-            x: emailBox.x + emailBox.width / 2 + randomDelay(-20, 20), 
-            y: emailBox.y + emailBox.height / 2 + randomDelay(-10, 10)
-        });
+        await moveNearElement(page, cursor, emailSelector, 20, 10);
         await new Promise(resolve => setTimeout(resolve, randomDelay(300, 800)));
         
         await cursor.click(emailSelector, {
@@ -421,14 +257,9 @@ async function getToken(email, password) {
         
         console.log('Interacting with password field...');
         const passwordSelector = '.txtPassword';
-        await page.waitForSelector(passwordSelector);
+        await page.waitForSelector(passwordSelector, { timeout: remainingMs(10000) });
         
-        const passwordElement = await page.$(passwordSelector);
-        const passwordBox = await passwordElement.boundingBox();
-        await cursor.moveTo({ 
-            x: passwordBox.x + passwordBox.width / 2 + randomDelay(-20, 20), 
-            y: passwordBox.y + passwordBox.height / 2 + randomDelay(-10, 10)
-        });
+        await moveNearElement(page, cursor, passwordSelector, 20, 10);
         await new Promise(resolve => setTimeout(resolve, randomDelay(300, 800)));
         
         await cursor.click(passwordSelector, {
@@ -440,22 +271,17 @@ async function getToken(email, password) {
         await new Promise(resolve => setTimeout(resolve, randomDelay(300, 600)));
         
         console.log('Typing password...');
-        await humanType(page, password, 0.03);
+        await humanType(page, password, 0);
         console.log('Password typed.');
         await debugScreenshot(page, debugDir, '02-credentials-entered.png');
 
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
 
         console.log('Clicking login button...');
-        const loginButtonSelector = '#loginform > div:nth-child(4) > button:nth-child(2)';
-        await page.waitForSelector(loginButtonSelector);
+        const loginButtonSelector = '#loginform button[type="submit"], #loginform > div:nth-child(4) > button:nth-child(2)';
+        await page.waitForSelector(loginButtonSelector, { timeout: remainingMs(10000) });
         
-        const loginButton = await page.$(loginButtonSelector);
-        const loginBox = await loginButton.boundingBox();
-        await cursor.moveTo({ 
-            x: loginBox.x + loginBox.width / 2 + randomDelay(-10, 10), 
-            y: loginBox.y + loginBox.height / 2 + randomDelay(-5, 5)
-        });
+        await moveNearElement(page, cursor, loginButtonSelector, 10, 5);
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
         
         await cursor.click(loginButtonSelector, {
