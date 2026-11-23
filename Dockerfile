@@ -1,8 +1,8 @@
 # Multi-stage build for smaller image size
-FROM node:18-bullseye-slim as base
+FROM node:22-bookworm-slim AS base
 
 # Install Chromium and dependencies in a single layer
-FROM base as dependencies
+FROM base AS dependencies
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Chromium
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 \
     libfontconfig1 \
     libgbm1 \
-    libgcc1 \
+    libgcc-s1 \
     libglib2.0-0 \
     libgtk-3-0 \
     libnspr4 \
@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y
 
 # Production stage
-FROM dependencies as production
+FROM dependencies AS production
 
 # Create non-root user for security
 RUN groupadd -r pptruser && useradd -r -g pptruser -G audio,video pptruser \
@@ -81,7 +81,7 @@ ENV DISPLAY=:99 \
 COPY --chown=pptruser:pptruser package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy application code
 COPY --chown=pptruser:pptruser . .
@@ -110,6 +110,7 @@ cleanup() {\n\
 trap cleanup SIGTERM SIGINT SIGQUIT\n\
 \n\
 echo "Starting Xvfb..."\n\
+rm -f /tmp/.X99-lock\n\
 Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &\n\
 XVFB_PID=$!\n\
 \n\

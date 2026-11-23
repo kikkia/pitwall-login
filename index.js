@@ -2,6 +2,7 @@ const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createCursor, installMouseHelper } = require('ghost-cursor');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -11,6 +12,13 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const DEBUG = process.env.DEBUG === 'true';
 const LOGIN_TIMEOUT_MS = Number(process.env.LOGIN_TIMEOUT_MS) || 80000;
+const API_KEY = process.env.API_KEY || '';
+const MAX_QUEUE_SIZE = Number(process.env.MAX_QUEUE_SIZE) || 3;
+
+let loginInFlight = false;
+const loginQueue = [];
+let activeBrowser = null;
+let isShuttingDown = false;
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
@@ -68,7 +76,68 @@ async function debugScreenshot(page, debugDir, filename) {
     await page.screenshot({ path: path.join(debugDir, filename) });
 }
 
-app.post('/get_token', async (req, res) => {
+function requireApiKey(req, res, next) {
+    if (!API_KEY) return next();
+
+    const headerKey = req.get('x-api-key');
+    const authHeader = req.get('authorization') || '';
+    const bearerKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const provided = headerKey || bearerKey;
+
+    if (!provided) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const expectedBuf = Buffer.from(API_KEY);
+    const providedBuf = Buffer.from(provided);
+    if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    next();
+}
+
+function runSerialized(task) {
+    return new Promise((resolve, reject) => {
+        if (loginInFlight && loginQueue.length >= MAX_QUEUE_SIZE) {
+            const err = new Error('Too many concurrent login requests');
+            err.statusCode = 429;
+            return reject(err);
+        }
+
+        const execute = async () => {
+            loginInFlight = true;
+            try {
+                resolve(await task());
+            } catch (err) {
+                reject(err);
+            } finally {
+                loginInFlight = false;
+                const next = loginQueue.shift();
+                if (next) next();
+            }
+        };
+
+        if (loginInFlight) {
+            loginQueue.push(execute);
+        } else {
+            execute();
+        }
+    });
+}
+
+app.get('/health', (req, res) => {
+    if (isShuttingDown) {
+        return res.status(503).json({ status: 'shutting_down' });
+    }
+    res.json({ status: 'ok', busy: loginInFlight });
+});
+
+app.post('/get_token', requireApiKey, async (req, res) => {
+    if (isShuttingDown) {
+        return res.status(503).json({ error: 'Server is shutting down' });
+    }
+
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -76,7 +145,7 @@ app.post('/get_token', async (req, res) => {
     }
 
     try {
-        const token = await getToken(email, password);
+        const token = await runSerialized(() => getToken(email, password));
         if (token) {
             res.json({ loginSession: token });
         } else {
@@ -84,7 +153,9 @@ app.post('/get_token', async (req, res) => {
         }
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'An internal server error occurred' });
+        const status = error.statusCode || 500;
+        const message = status === 429 ? error.message : 'An internal server error occurred';
+        res.status(status).json({ error: message });
     }
 });
 
@@ -134,6 +205,7 @@ async function getToken(email, password) {
             ignoreDefaultArgs: ['--enable-automation'],
             defaultViewport: null
         });
+        activeBrowser = browser;
 
         const pages = await browser.pages();
         page = pages[0] || await browser.newPage();
@@ -353,6 +425,9 @@ async function getToken(email, password) {
             }
         }
         if (browser) {
+            if (activeBrowser === browser) {
+                activeBrowser = null;
+            }
             console.log('Closing browser.');
             try {
                 await browser.close();
@@ -364,6 +439,32 @@ async function getToken(email, password) {
     }
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
+
+async function shutdown(signal) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`Received ${signal}, shutting down...`);
+
+    server.close(async () => {
+        if (activeBrowser) {
+            try {
+                await activeBrowser.close();
+            } catch (err) {
+                console.error('Error closing browser during shutdown:', err);
+            }
+            activeBrowser = null;
+        }
+        process.exit(0);
+    });
+
+    setTimeout(() => {
+        console.error('Forced shutdown after timeout');
+        process.exit(1);
+    }, 10000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
