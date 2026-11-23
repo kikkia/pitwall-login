@@ -9,6 +9,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const DEBUG = process.env.DEBUG === 'true';
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
@@ -50,10 +51,19 @@ async function humanType(page, text, mistakeRate = 0.05) {
 }
 
 async function logCookies(page, stage) {
+    if (!DEBUG) return;
     const cookies = await page.cookies();
+    const sanitized = cookies.map(c =>
+        c.name === 'login-session' ? { ...c, value: '[REDACTED]' } : c
+    );
     console.log(`--- Cookies at ${stage} ---`);
-    console.log(JSON.stringify(cookies, null, 2));
+    console.log(JSON.stringify(sanitized, null, 2));
     console.log(`--- End of Cookies at ${stage} ---`);
+}
+
+async function debugScreenshot(page, debugDir, filename) {
+    if (!DEBUG) return;
+    await page.screenshot({ path: path.join(debugDir, filename) });
 }
 
 app.post('/get_token', async (req, res) => {
@@ -79,8 +89,8 @@ app.post('/get_token', async (req, res) => {
 async function getToken(email, password) {
     let browser, page;
     const debugDir = './debug';
-    if (!fs.existsSync(debugDir)){
-        fs.mkdirSync(debugDir);
+    if (DEBUG && !fs.existsSync(debugDir)){
+        fs.mkdirSync(debugDir, { recursive: true });
     }
 
     try {
@@ -311,7 +321,9 @@ async function getToken(email, password) {
             }
         });
 
-        await installMouseHelper(page);
+        if (DEBUG) {
+            await installMouseHelper(page);
+        }
         
         // Use a more realistic user agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
@@ -367,7 +379,7 @@ async function getToken(email, password) {
         console.log('Login page loaded.');
         await logCookies(page, 'after page load');
 
-        await page.screenshot({ path: `${debugDir}/01-login-page.png` });
+        await debugScreenshot(page, debugDir, '01-login-page.png');
         console.log('Waiting for page to settle...');
         await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 3500)));
 
@@ -421,7 +433,7 @@ async function getToken(email, password) {
         console.log('Typing password...');
         await humanType(page, password, 0.03);
         console.log('Password typed.');
-        await page.screenshot({ path: `${debugDir}/02-credentials-entered.png` });
+        await debugScreenshot(page, debugDir, '02-credentials-entered.png');
 
         await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
 
@@ -447,7 +459,7 @@ async function getToken(email, password) {
         await logCookies(page, 'after login click');
         
         await new Promise(resolve => setTimeout(resolve, 7000));
-        await page.screenshot({ path: `${debugDir}/03-after-login-click.png` });
+        await debugScreenshot(page, debugDir, '03-after-login-click.png');
 
         console.log('Waiting for login session cookie...');
         let loginSessionCookie = null;
@@ -476,13 +488,13 @@ async function getToken(email, password) {
             };
         } else {
             console.log('Login session cookie not found.');
-            await page.screenshot({ path: `${debugDir}/04-token-not-found.png` });
+            await debugScreenshot(page, debugDir, '04-token-not-found.png');
             return null;
         }
     } catch (error) {
         console.error('Error in getToken:', error);
         if (page) {
-            await page.screenshot({ path: `${debugDir}/error-screenshot.png` });
+            await debugScreenshot(page, debugDir, 'error-screenshot.png');
         }
         throw error;
     } finally {
