@@ -1,1 +1,4 @@
 node_modules
+debug/
+.env*
+extension/isdcac/_metadata/
