@@ -10,6 +10,11 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+const stealthPlugin = StealthPlugin();
+stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
+stealthPlugin.enabledEvasions.delete('navigator.plugins');
+puppeteer.use(stealthPlugin);
+
 function randomDelay(min = 50, max = 200) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -80,17 +85,14 @@ async function getToken(email, password) {
 
     try {
         console.log('Launching browser...');
-        
-        // Configure stealth plugin with all evasions
-        const stealthPlugin = StealthPlugin();
-        stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
-        stealthPlugin.enabledEvasions.delete('navigator.plugins');
-        puppeteer.use(stealthPlugin);
+        const extensionPath = path.join(__dirname, 'extension', 'isdcac');
 
         browser = await puppeteer.launch({
             headless: false,
+            enableExtensions: true,
             args: [
-                `--load-extension=${path.join(__dirname, 'extension', 'isdcac')}`,
+                `--disable-extensions-except=${extensionPath}`,
+                `--load-extension=${extensionPath}`,
                 '--disable-blink-features=AutomationControlled',
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -328,7 +330,6 @@ async function getToken(email, password) {
             }
         );
         
-        let subscriptionToken = null;
         console.log('Browser launched. Page created.');
         // The browser extension will handle cookies, so we don't need to set them manually.
 
