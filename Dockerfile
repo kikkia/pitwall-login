@@ -86,8 +86,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy application code
 COPY --chown=pptruser:pptruser . .
 
-# Create debug directory
-RUN mkdir -p /app/debug && chown -R pptruser:pptruser /app/debug
+# Create debug directory and X11 socket directory for non-root Xvfb
+RUN mkdir -p /app/debug /tmp/.X11-unix \
+    && chown -R pptruser:pptruser /app/debug \
+    && chmod 1777 /tmp/.X11-unix
 
 # Create startup script with better error handling
 RUN echo '#!/bin/bash\n\

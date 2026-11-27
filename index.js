@@ -161,6 +161,7 @@ app.post('/get_token', requireApiKey, async (req, res) => {
 
 async function getToken(email, password) {
     let browser, page;
+    let timedOut = false;
     const deadline = Date.now() + LOGIN_TIMEOUT_MS;
     const remainingMs = (max) => {
         const left = deadline - Date.now();
@@ -174,6 +175,14 @@ async function getToken(email, password) {
         fs.mkdirSync(debugDir, { recursive: true });
     }
 
+    const hardTimer = setTimeout(() => {
+        timedOut = true;
+        console.error(`Hard login timeout reached (${LOGIN_TIMEOUT_MS}ms), closing browser.`);
+        if (browser) {
+            browser.close().catch(() => {});
+        }
+    }, LOGIN_TIMEOUT_MS);
+
     try {
         console.log('Launching browser...');
         const extensionPath = path.join(__dirname, 'extension', 'isdcac');
@@ -181,6 +190,7 @@ async function getToken(email, password) {
         browser = await puppeteer.launch({
             headless: false,
             enableExtensions: true,
+            protocolTimeout: 30000,
             args: [
                 `--disable-extensions-except=${extensionPath}`,
                 `--load-extension=${extensionPath}`,
@@ -256,7 +266,7 @@ async function getToken(email, password) {
         const cursor = createCursor(
             page,
             { x: Math.random() > 0.5 ? 0 : viewport.width, y: Math.random() * viewport.height },
-            true,
+            false,
             {
                 move: {
                     moveSpeed: randomDelay(300, 450)
@@ -273,8 +283,11 @@ async function getToken(email, password) {
             timeout: remainingMs(20000)
         });
         console.log('F1 TV homepage loaded.');
+
+        const signInButtonSelector = 'a.btn.btn-f1-dark[title="Sign in"]';
+        await page.waitForSelector(signInButtonSelector, { timeout: remainingMs(20000) });
         
-        // Random mouse movements to simulate browsing
+        // Random mouse movements to simulate browsing once the page has hydrated
         await cursor.moveTo({ x: Math.random() * viewport.width, y: Math.random() * viewport.height });
         await new Promise(resolve => setTimeout(resolve, randomDelay(1000, 2000)));
 
@@ -283,9 +296,6 @@ async function getToken(email, password) {
             window.scrollBy(0, Math.random() * 300);
         });
         await new Promise(resolve => setTimeout(resolve, randomDelay(800, 1500)));
-
-        const signInButtonSelector = 'a.btn.btn-f1-dark[title="Sign in"]';
-        await page.waitForSelector(signInButtonSelector, { timeout: remainingMs(15000) });
         
         await cursor.click(signInButtonSelector, {
             hesitate: randomDelay(1500, 2500),
@@ -407,6 +417,9 @@ async function getToken(email, password) {
             return null;
         }
     } catch (error) {
+        if (timedOut) {
+            throw new Error(`Login timed out after ${LOGIN_TIMEOUT_MS}ms`);
+        }
         console.error('Error in getToken:', error);
         if (page) {
             try {
@@ -417,7 +430,8 @@ async function getToken(email, password) {
         }
         throw error;
     } finally {
-        if (page) {
+        clearTimeout(hardTimer);
+        if (page && !timedOut) {
             try {
                 await logCookies(page, 'before browser close');
             } catch (cookieErr) {
